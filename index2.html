@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Simulador de Fluxo Magnético - José Antonio Ruivo</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #121212; color: white; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        canvas { background: #000; border: 2px solid #3366ff; border-radius: 4px; box-shadow: 0 0 20px rgba(0, 102, 255, 0.2); }
+        
+        .header { text-align: center; margin-bottom: 20px; }
+        .header h1 { color: #4da6ff; margin: 0; font-size: 24px; }
+        .header p { color: #aaa; margin: 5px 0; font-weight: bold; }
+
+        .main-container { display: flex; gap: 20px; max-width: 1100px; }
+        
+        .instructions { background: #1e1e1e; padding: 15px; border-left: 4px solid #4da6ff; border-radius: 4px; width: 250px; font-size: 0.85em; line-height: 1.4; }
+        .instructions h3 { margin-top: 0; color: #4da6ff; }
+        .instructions ul { padding-left: 18px; }
+
+        .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; padding: 20px; background: #252525; border-radius: 8px; width: 800px; }
+        .control-group { display: flex; flex-direction: column; }
+        label { margin-bottom: 5px; font-size: 0.85em; color: #4da6ff; text-transform: uppercase; letter-spacing: 1px; }
+        input[type=range] { cursor: pointer; }
+        
+        .stats { grid-column: span 2; margin-top: 10px; padding: 10px; background: #111; border: 1px solid #444; font-family: 'Courier New', monospace; color: #00ff00; border-radius: 4px; }
+        .formula { font-size: 0.9em; color: #ffcc00; text-align: center; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>Fluxo Concatenado e Indução Mútua</h1>
+        <p>José Antonio Ruivo | Engenharia Elétrica - FMU</p>
+    </div>
+
+    <div class="main-container">
+        <div class="instructions">
+            <h3>Instruções</h3>
+            <ul>
+                <li><b>Corrente (i₁):</b> Ajuste para gerar o campo magnético inicial. Valores negativos invertem a polaridade.</li>
+                <li><b>Espiras (N):</b> Altere a geometria das bobinas. Note como <b>λ = NΦ</b> cresce com N.</li>
+                <li><b>Permeabilidade (μ):</b> Simula a introdução de um núcleo ferromagnético, concentrando as linhas de fluxo.</li>
+                <li><b>Lei de Lenz:</b> Mova o slider de corrente rapidamente. O valor de <b>FEM</b> reagirá à taxa de variação temporal.</li>
+            </ul>
+        </div>
+
+        <div class="sim-area">
+            <canvas id="simCanvas" width="800" height="400"></canvas>
+
+            <div class="controls">
+                <div class="control-group">
+                    <label>Corrente Bobina 1 (i₁): <span id="v-i1">1.0</span> A</label>
+                    <input type="range" id="i1" min="-10" max="10" step="0.1" value="1">
+                    
+                    <label>Espiras Bobina 1 (N₁): <span id="v-n1">10</span></label>
+                    <input type="range" id="n1" min="1" max="40" step="1" value="10">
+                </div>
+                <div class="control-group">
+                    <label>Permeabilidade do Meio (μ): <span id="v-mu">1.0</span></label>
+                    <input type="range" id="mu" min="1" max="15" step="0.1" value="1">
+                    
+                    <label>Espiras Bobina 2 (N₂): <span id="v-n2">10</span></label>
+                    <input type="range" id="n2" min="1" max="40" step="1" value="10">
+                </div>
+                <div class="stats" id="info">
+                    Calculando parâmetros magnéticos...
+                </div>
+            </div>
+            <div class="formula">
+                λ = N · Φ | ε = -dλ/dt (Lei de Faraday-Lenz)
+            </div>
+        </div>
+    </div>
+
+<script>
+const canvas = document.getElementById('simCanvas');
+const ctx = canvas.getContext('2d');
+
+let params = {
+    i1: 1, n1: 10, n2: 10, mu: 1, prevLambda: 0
+};
+
+document.querySelectorAll('input').forEach(input => {
+    input.addEventListener('input', (e) => {
+        params[e.target.id] = parseFloat(e.target.value);
+        document.getElementById('v-' + e.target.id).innerText = e.target.value;
+    });
+});
+
+function drawCoil(x, y, n, color, label) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    for(let i = 0; i < n; i++) {
+        ctx.beginPath();
+        ctx.ellipse(x + (i*8), y, 12, 35, 0, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+    ctx.fillStyle = color;
+    ctx.font = "bold 12px Arial";
+    ctx.fillText(label, x, y + 60);
+}
+
+function drawFluxLines(i, n, mu) {
+    const strength = i * n * mu * 0.2;
+    if (Math.abs(strength) < 0.1) return;
+
+    ctx.setLineDash([8, 4]);
+    ctx.strokeStyle = `rgba(0, 150, 255, ${Math.min(Math.abs(strength)/10, 0.8)})`;
+    ctx.lineWidth = 1.5;
+
+    let offset = (Date.now() / 40) % 12;
+    if (i < 0) offset *= -1;
+
+    for(let j = -4; j <= 4; j++) {
+        ctx.beginPath();
+        ctx.lineDashOffset = offset;
+        ctx.moveTo(80, 200 + (j*15));
+        ctx.bezierCurveTo(300, 200 + (j*100), 500, 200 + (j*100), 720, 200 + (j*15));
+        ctx.stroke();
+    }
+    ctx.setLineDash([]);
+}
+
+function animate() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Cálculos de Fluxo
+    const phi = params.i1 * params.mu * 0.002; 
+    const lambda1 = params.n1 * phi * params.n1; // Concatenado no primário
+    const lambda2 = params.n2 * phi * params.n1 * 0.6; // Mútuo no secundário
+
+    // Lei de Faraday (Taxa de variação)
+    const dLambda = lambda1 - params.prevLambda;
+    const femInduzida = -dLambda * 20; 
+    params.prevLambda = lambda1;
+
+    // Desenho
+    drawFluxLines(params.i1, params.n1, params.mu);
+    drawCoil(150, 200, params.n1, "#ffcc00", `Bobina 1 (N=${params.n1})`);
+    drawCoil(500, 200, params.n2, "#00ff88", `Bobina 2 (N=${params.n2})`);
+
+    // Vetor Direcional do Fluxo
+    if (Math.abs(params.i1) > 0.2) {
+        ctx.strokeStyle = "#4da6ff";
+        ctx.fillStyle = "#4da6ff";
+        const dir = params.i1 > 0 ? 1 : -1;
+        drawArrow(400, 150, 400 + (30 * dir), 150);
+        ctx.fillText("Sentido de Φ", 370, 140);
+    }
+
+    // Atualização do Painel
+    document.getElementById('info').innerHTML = `
+        &gt; Φ (Fluxo Unitário): ${phi.toFixed(5)} Wb <br>
+        &gt; λ₁ (Concatenado): ${lambda1.toFixed(4)} Wb-espira <br>
+        &gt; ε (FEM Induzida Instantânea): ${femInduzida.toFixed(4)} V
+    `;
+
+    requestAnimationFrame(animate);
+}
+
+function drawArrow(x1, y1, x2, y2) {
+    const headlen = 10;
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.lineTo(x2 - headlen * Math.cos(angle - Math.PI / 6), y2 - headlen * Math.sin(angle - Math.PI / 6));
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - headlen * Math.cos(angle + Math.PI / 6), y2 - headlen * Math.sin(angle + Math.PI / 6));
+    ctx.stroke();
+}
+
+animate();
+</script>
+</body>
+</html>
